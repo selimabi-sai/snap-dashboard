@@ -16,6 +16,7 @@ import unicodedata
 import json
 from pathlib import Path
 import time
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 AYARLAR_DOSYASI = Path(__file__).parent / "snap_ayarlar.json"
 
@@ -104,6 +105,54 @@ def tr_df_fmt(v):
     except:
         return str(v) if v else "—"
 
+def puan_yuzde_sutunu_mu(col_name):
+    col_norm = normalize_col(col_name)
+    if col_norm in {
+        normalize_col("BİLANÇO SONRASI"),
+        normalize_col("BİLANÇO SONRASI XU100"),
+        normalize_col("ALFA"),
+    }:
+        return True
+    return any(k in col_norm for k in ["MARJ", "GETIRI", "YUZDE", "BUYUME", "ROA", "ROE", "ROIC"])
+
+def puan_carpan_sutunu_mu(col_name):
+    col_key = normalize_col(col_name).replace(" ", "")
+    return any(k in col_key for k in ["PD/DD", "PDDD", "FD/FAVOK", "F/K", "CARPAN"])
+
+def puan_ters_iyi_sutunu_mu(col_name):
+    col_key = normalize_col(col_name).replace(" ", "")
+    if "BORC" in col_key:
+        return True
+    return any(k == col_key for k in ["PD/DD", "PDDD", "FD/FAVOK", "F/K", "NETBORC/FAVOK"])
+
+def puan_kalin_sutunu_mu(col_name):
+    col_norm = normalize_col(col_name)
+    return col_norm in {
+        normalize_col("SNAP"),
+        normalize_col("ALFA"),
+    }
+
+def puan_df_fmt(col_name, value):
+    if value is None:
+        return "—"
+    try:
+        fv = float(value)
+        if np.isnan(fv):
+            return "—"
+        if puan_yuzde_sutunu_mu(col_name):
+            return "% " + tr_fmt(fv, 2)
+        if puan_carpan_sutunu_mu(col_name):
+            return tr_fmt(fv, 2) + " x"
+        return tr_df_fmt(fv)
+    except:
+        return str(value) if value else "—"
+
+def tam_sayi_fmt(value):
+    fv = safe_float(value)
+    if pd.notna(fv):
+        return str(int(fv))
+    return "—"
+
 def df_goster(df, height=None, use_container_width=True, mn_tl=False, puan_stili=False):
     """Sayısal sütunları Türkçe formatlı Styler ile göster (sıralama bozulmaz)."""
     num_cols = df.select_dtypes(include="number").columns.tolist()
@@ -112,13 +161,13 @@ def df_goster(df, height=None, use_container_width=True, mn_tl=False, puan_stili
     if puan_stili:
         styled = styled.set_table_styles([
             {"selector": "table",
-             "props": [("background-color", "#FFFFFF"), ("border-collapse", "collapse"), ("width", "100%")]},
+             "props": [("background-color", MAIN_BG), ("border-collapse", "collapse"), ("width", "100%")]},
             {"selector": "thead tr th",
              "props": [
-                 ("background-color", PUAN_HEADER_BG),
+                 ("background-color", "#1E3A5F"),
                  ("color", "#FFFFFF"),
                  ("font-weight", "700"),
-                 ("font-size", "12px"),
+                 ("font-size", "14px"),
                  ("letter-spacing", "0.05em"),
                  ("text-transform", "uppercase"),
                  ("text-align", "center"),
@@ -129,22 +178,22 @@ def df_goster(df, height=None, use_container_width=True, mn_tl=False, puan_stili
                  ("white-space", "nowrap"),
              ]},
             {"selector": "tbody tr",
-             "props": [("background-color", "#FFFFFF")]},
+             "props": [("background-color", MAIN_CARD)]},
             {"selector": "tbody tr:nth-child(even)",
-             "props": [("background-color", "#F2F6FB")]},
+             "props": [("background-color", "#1A2F4A")]},
             {"selector": "tbody tr:hover",
-             "props": [("background-color", "#DDEAF7")]},
+             "props": [("background-color", "#243B5C")]},
             {"selector": "tbody tr td",
              "props": [
-                 ("color", "#000000"),
-                 ("font-size", "13px"),
+                 ("color", "#E2E8F0"),
+                 ("font-size", "14px"),
                  ("font-weight", "500"),
                  ("padding", "9px 14px"),
-                 ("border-bottom", "1px solid #D6E4F0"),
-                 ("border-right", "1px solid #EBF2FA"),
+                 ("border-bottom", f"1px solid {MAIN_BORDER}"),
+                 ("border-right", f"1px solid {MAIN_BORDER}"),
              ]},
             {"selector": "tbody tr td:first-child",
-             "props": [("font-weight", "700"), ("color", "#000000")]},
+             "props": [("font-weight", "700"), ("color", "#E2E8F0")]},
         ])
     kwargs = {"use_container_width": use_container_width}
     if height:
@@ -233,10 +282,14 @@ if "ayarlar_yuklendi" not in st.session_state:
     st.session_state.bar_tek_renk = _kayit.get("bar_tek_renk", None)
     _eski = _kayit.get("kpi_ham", []) + _kayit.get("kpi_snap", [])
     st.session_state.kpi_cols_kayit = _kayit.get("kpi_cols", _eski)
+    st.session_state.ozet_kaynak_sayfasi = _kayit.get("ozet_kaynak_sayfasi", "")
+    st.session_state.ozet_grafikler_map = _kayit.get("ozet_grafikler_map", {})
     st.session_state.ozet_grafikler_kayit = _kayit.get("ozet_grafikler", [])
-    st.session_state.puan_m6_kayit  = PUAN_SABIT_SUTUNLAR
+    st.session_state.puan_kaynak_sayfasi = _kayit.get("puan_kaynak_sayfasi", "")
+    st.session_state.puan_m6_map = _kayit.get("puan_m6_map", {})
+    st.session_state.puan_m6_kayit  = _kayit.get("puan_m6", PUAN_SABIT_SUTUNLAR)
     st.session_state.puan_sr6_kayit = _kayit.get("puan_sr6", "")
-    st.session_state["m6"] = PUAN_SABIT_SUTUNLAR
+    st.session_state["m6"] = _kayit.get("puan_m6", PUAN_SABIT_SUTUNLAR)
     if _kayit.get("puan_sr6"):
         st.session_state["sr6"] = _kayit["puan_sr6"]
     st.session_state.ayarlar_yuklendi = True
@@ -265,19 +318,31 @@ METIN_SOLUK = "#475569" if _parlak > 128 else "#94A3B8"
 METIN_ZAYIF = "#64748B"
 GRID_RENK   = "#CBD5E1" if _parlak > 128 else "#1E293B"
 
-MAIN_BG       = "#FFFFFF"
-MAIN_SURFACE  = "#F8FAFC"
-MAIN_CARD     = "#FFFFFF"
-MAIN_METIN    = "#0F2B4C"
-MAIN_SOLUK    = "#1F4E79"
-MAIN_GRID     = "#E2E8F0"
-MAIN_BASLIK   = "#0F2B4C"
-MAIN_BORDER   = "#CBD5E1"
+MAIN_BG       = "#0F1923"
+MAIN_SURFACE  = "#1A2744"
+MAIN_CARD     = "#1E293B"
+MAIN_METIN    = "#E2E8F0"
+MAIN_SOLUK    = "#94A3B8"
+MAIN_GRID     = "#2D3F5E"
+MAIN_BASLIK   = "#E2E8F0"
+MAIN_BORDER   = "#2D3F5E"
 MAIN_HEADER   = "#1E3A5F"
 PUAN_HEADER_BG = "#0F2B4C"
 PUAN_HEADER_BORDER = "#081727"
 PUAN_HEADER_DIVIDER = "#29527A"
 PUAN_ILK50_RENKLER = ["#B4D9B4", "#C7E6C7", "#D9F0D9", "#EAF8EA", "#F5FCF5"]
+PUAN_TERM_BG = "#020305"
+PUAN_TERM_SURFACE = "#070B11"
+PUAN_TERM_SURFACE_ALT = "#0B1118"
+PUAN_TERM_BORDER = "#16212E"
+PUAN_TERM_TEXT = "#E6EEF8"
+PUAN_TERM_MUTED = "#7B8DA4"
+PUAN_TERM_EMPTY = "#334155"
+PUAN_TERM_SUCCESS = "#00E396"
+PUAN_TERM_DANGER = "#FF4560"
+PUAN_TERM_CYAN = "#22D3EE"
+PUAN_TERM_PURPLE = "#A855F7"
+PUAN_TERM_FONT = "Bahnschrift, Aptos, Segoe UI, Arial, sans-serif"
 
 def puan_donem_sutunu_mu(col_name):
     return any(k in str(col_name).upper() for k in ("DÖNEM", "DONEM", "PERIOD", "TARİH", "TARIH", "DATE"))
@@ -299,7 +364,7 @@ def puan_satir_rengi(row_pos):
 def puan_hucre_yazi_rengi(col_name, value):
     col_norm = normalize_col(col_name)
     if col_norm == normalize_col("SNAP"):
-        return PUAN_HEADER_BG
+        return "#081727"
     if col_norm == normalize_col("ALFA"):
         fv = safe_float(value)
         if pd.notna(fv):
@@ -310,6 +375,32 @@ def puan_hucre_yazi_rengi(col_name, value):
             if fv < 0:
                 return "#DC2626"
     return "#000000"
+
+def puan_terminal_hucre_css(col_name, value):
+    col_norm = normalize_col(col_name)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return f"color: {PUAN_TERM_EMPTY}; font-weight: 700;"
+    if col_norm == normalize_col("HISSE"):
+        return f"color: {PUAN_TERM_CYAN}; font-weight: 800; text-shadow: 0 0 12px rgba(34,211,238,0.35);"
+    if col_norm == normalize_col("SEKTOR"):
+        return f"color: {PUAN_TERM_MUTED}; font-weight: 600;"
+    if puan_donem_sutunu_mu(col_name):
+        return f"color: {PUAN_TERM_MUTED}; font-weight: 700;"
+    if col_norm == normalize_col("SNAP"):
+        return f"color: {PUAN_TERM_PURPLE}; font-weight: 800; text-shadow: 0 0 12px rgba(168,85,247,0.35);"
+
+    fv = safe_float(value)
+    if pd.notna(fv):
+        if fv > 0:
+            renk = PUAN_TERM_DANGER if puan_ters_iyi_sutunu_mu(col_name) else PUAN_TERM_SUCCESS
+            golge = "255,69,96" if renk == PUAN_TERM_DANGER else "0,227,150"
+            return f"color: {renk}; font-weight: 800; text-shadow: 0 0 10px rgba({golge},0.28);"
+        if fv < 0:
+            renk = PUAN_TERM_SUCCESS if puan_ters_iyi_sutunu_mu(col_name) else PUAN_TERM_DANGER
+            golge = "255,69,96" if renk == PUAN_TERM_DANGER else "0,227,150"
+            return f"color: {renk}; font-weight: 800; text-shadow: 0 0 10px rgba({golge},0.28);"
+        return f"color: {PUAN_TERM_TEXT}; font-weight: 800;"
+    return f"color: {PUAN_TERM_TEXT}; font-weight: 700;"
 
 def snap_amblem_html(compact=False):
     if compact:
@@ -332,21 +423,20 @@ def snap_amblem_html(compact=False):
 
 st.markdown(f"""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
   html, body, p, h1, h2, h3, h4, h5, h6,
   .stMarkdown *, .stButton > button,
   div[data-testid="metric-container"] *,
   .stSelectbox > div, .stMultiSelect > div,
   .stTextInput input, .stNumberInput input,
-  .stDataFrame, .stTable {{ font-family: 'Inter', sans-serif !important; }}
+  .stDataFrame, .stTable {{ font-family: 'Segoe UI', Arial, sans-serif !important; }}
 
   .stApp {{ background-color:{MAIN_BG}; }}
-  .main .block-container {{ padding: 1.5rem 2rem 2rem 2rem; max-width: 1400px; }}
+  .main .block-container {{ padding: 1.5rem 2rem 2rem 2rem; max-width: 1180px; }}
 
   .main p, .main span, .main div, .main label {{ color: {MAIN_METIN}; }}
-  .main h1, .main h2, .main h3 {{ color: {MAIN_BASLIK} !important; font-weight: 700 !important; letter-spacing: -0.02em; }}
-  .main h3 {{ font-size: 18px !important; border-bottom: 1px solid {MAIN_BORDER}; padding-bottom: 10px; margin-bottom: 20px; }}
+  .main h1 {{ color: {MAIN_BASLIK} !important; font-weight: 700 !important; letter-spacing: -0.02em; font-size: 22px !important; }}
+  .main h2 {{ color: {MAIN_BASLIK} !important; font-weight: 700 !important; letter-spacing: -0.02em; font-size: 20px !important; }}
+  .main h3 {{ color: {MAIN_BASLIK} !important; font-weight: 700 !important; letter-spacing: -0.02em; font-size: 18px !important; border-bottom: 1px solid {MAIN_BORDER}; padding-bottom: 10px; margin-bottom: 20px; }}
 
   [data-testid="stSidebar"] {{
     background-color:{SURFACE};
@@ -388,14 +478,15 @@ st.markdown(f"""
 
   div[data-testid="metric-container"] {{
     background: {MAIN_CARD};
-    border: 1px solid {MAIN_BORDER};
+    border: 2px solid {MAIN_BORDER};
+    border-left: 4px solid #60A5FA;
     border-radius: 12px;
-    padding: 16px 20px;
+    padding: 18px 22px;
     transition: box-shadow 0.2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
   }}
   div[data-testid="metric-container"]:hover {{
-    box-shadow: 0 4px 16px rgba(31,78,121,0.12);
+    box-shadow: 0 4px 20px rgba(96,165,250,0.18);
   }}
   div[data-testid="metric-container"] label,
   div[data-testid="metric-container"] label p,
@@ -407,7 +498,7 @@ st.markdown(f"""
   div[data-testid="metric-container"] [data-testid="stMetricLabel"] div,
   div[data-testid="metric-container"] [data-testid="stMetricLabel"] * {{
     color: {MAIN_BASLIK} !important;
-    font-size: 12px !important;
+    font-size: 13px !important;
     font-weight: 700 !important;
     letter-spacing: 0.06em !important;
     text-transform: uppercase !important;
@@ -416,8 +507,8 @@ st.markdown(f"""
   div[data-testid="stMetricValue"],
   div[data-testid="stMetricValue"] div,
   div[data-testid="stMetricValue"] * {{
-    color: {MAIN_BASLIK} !important;
-    font-size: 24px !important;
+    color: #FFFFFF !important;
+    font-size: 28px !important;
     font-weight: 700 !important;
     letter-spacing: -0.02em !important;
     opacity: 1 !important;
@@ -656,7 +747,11 @@ def _ayarlar_dict():
         "negatif_renk": st.session_state.get("negatif_renk", "#EF4444"),
         "bar_tek_renk": st.session_state.get("bar_tek_renk"),
         "kpi_cols":       st.session_state.get("kpi_cols", []),
+        "ozet_kaynak_sayfasi": st.session_state.get("ozet_kaynak_sayfasi", ""),
+        "ozet_grafikler_map": st.session_state.get("ozet_grafikler_map", {}),
         "ozet_grafikler": st.session_state.get("m_det_ozet", []),
+        "puan_kaynak_sayfasi": st.session_state.get("puan_kaynak_sayfasi", ""),
+        "puan_m6_map":     st.session_state.get("puan_m6_map", {}),
         "puan_m6":        st.session_state.get("m6", []),
         "puan_sr6":       st.session_state.get("sr6", ""),
     }
@@ -705,7 +800,7 @@ with st.sidebar:
                     'background:rgba(0,0,0,0.6);z-index:999999;display:flex;align-items:center;' +
                     'justify-content:center;';
                 overlay.innerHTML = '<div style="background:{MAIN_SURFACE};color:{MAIN_BASLIK};padding:30px 50px;' +
-                    'border-radius:16px;font-family:Inter,sans-serif;font-size:18px;font-weight:600;' +
+                    'border-radius:16px;font-family:Segoe UI,Arial,sans-serif;font-size:18px;font-weight:600;' +
                     'box-shadow:0 8px 32px rgba(0,0,0,0.3);">' +
                     '📸 Ekran görüntüsü alınıyor...</div>';
                 parentDoc.body.appendChild(overlay);
@@ -780,13 +875,7 @@ with st.sidebar:
 
     SAYFA_LISTESI = [
         "📋 Özet",
-        "📊 Metrik Tablosu",
-        "🏭 Sektör Kıyası",
-        "🔍 Fırsat Tarama",
-        "📈 Çeyreklik Trend",
         "🏆 Puan Tablosu",
-        "🧮 Formül Hesaplayıcı",
-        "🌍 Yabancı Akım",
     ]
     aktif_sayfa = st.radio("Sayfa:", SAYFA_LISTESI, label_visibility="collapsed", key="nav_sayfa")
 
@@ -826,6 +915,69 @@ for _d in tum_donemler:
     elif len(_dfs) == 1:
         merged_data[_d] = _dfs[0].copy()
 
+def tum_veri_sayfalari():
+    sayfalar = []
+    for _, ham_s, snap_s in DONEM_SAYFALARI:
+        sayfalar.extend([ham_s, snap_s])
+    sayfalar.extend([PUAN_SAYFASI, "son", AYAR_SAYFASI])
+    sayfalar.extend(CIKTI_SAYFALARI)
+    sayfalar.append("YA")
+    return list(dict.fromkeys(sayfalar))
+
+def sayfa_verisi_getir(sayfa_adi):
+    for donem, ham_s, snap_s in DONEM_SAYFALARI:
+        if sayfa_adi == ham_s:
+            return ham_data.get(donem, pd.DataFrame()).copy()
+        if sayfa_adi == snap_s:
+            return snap_data.get(donem, pd.DataFrame()).copy()
+    if sayfa_adi == PUAN_SAYFASI:
+        return puan_data.copy()
+    if sayfa_adi == "son":
+        return son_data.copy()
+    if sayfa_adi == AYAR_SAYFASI:
+        return ayar_data.copy()
+    if sayfa_adi in CIKTI_SAYFALARI:
+        return cikti_data.get(sayfa_adi, pd.DataFrame()).copy()
+    if sayfa_adi == "YA":
+        return ya_data.copy()
+    return pd.DataFrame()
+
+def sayfa_metrikleri_getir(sayfa_adi, hisse=None, sadece_sayisal=False):
+    df = sayfa_verisi_getir(sayfa_adi)
+    if df.empty:
+        return []
+
+    kolonlar = [c for c in df.columns if c not in ["Hisse", "Sektör"]]
+    if hisse is None or "Hisse" not in df.columns:
+        if not sadece_sayisal:
+            return sorted(kolonlar)
+        return sorted([c for c in kolonlar if not pd.to_numeric(df[c], errors="coerce").isna().all()])
+
+    satirlar = df[df["Hisse"] == hisse]
+    if satirlar.empty:
+        return []
+
+    sonuc = []
+    for col in kolonlar:
+        if not sadece_sayisal:
+            sonuc.append(col)
+            continue
+        seri = pd.to_numeric(satirlar[col], errors="coerce")
+        if not seri.isna().all():
+            sonuc.append(col)
+    return sorted(sonuc)
+
+def ozet_seri_kaynaklari_getir(sayfa_adi):
+    for _, ham_s, snap_s in DONEM_SAYFALARI:
+        if sayfa_adi == ham_s:
+            return [(donem, ham_label) for donem, ham_label, _ in reversed(DONEM_SAYFALARI)]
+        if sayfa_adi == snap_s:
+            return [(donem, snap_label) for donem, _, snap_label in reversed(DONEM_SAYFALARI)]
+    return [(sayfa_adi, sayfa_adi)]
+
+def ozet_kaynak_donemsel_mi(sayfa_adi):
+    return any(sayfa_adi in (ham_s, snap_s) for _, ham_s, snap_s in DONEM_SAYFALARI)
+
 with sidebar_kpi_placeholder.container():
     st.divider()
     st.markdown(f"<p style='color:{ALTIN};font-weight:bold;font-size:13px'>📌 KPI Kartları</p>", unsafe_allow_html=True)
@@ -841,12 +993,14 @@ with sidebar_kpi_placeholder.container():
 
     _kpi_sabit_istek = [
         "SNAP",
-        "NAKİT",
-        "EFK",
+        "NAKİT AKIŞ PUANI",
+        "GELİR TABLOSU PUANI",
         "PDDD",
         "NET BORÇ / FAVÖK",
         "FD/FAVÖK",
+        "ALFA",
         "BİLANÇO SONRASI",
+        "BİLANÇO SONRASI XU100",
     ]
 
     def _kpi_norm(s):
@@ -860,11 +1014,14 @@ with sidebar_kpi_placeholder.container():
         _norm2col[_kpi_norm(_c)] = _c
 
     _alternatifler = {
-        "NAKİT": ["NAKIT"],
+        "NAKİT AKIŞ PUANI": ["NAKIT AKIS PUANI", "NAKİT AKIS PUANI", "NAKIT AKIŞ PUANI"],
+        "GELİR TABLOSU PUANI": ["GELIR TABLOSU PUANI"],
         "PDDD": ["PD/DD", "PD / DD", "PD-DD", "PD DD"],
         "NET BORÇ / FAVÖK": ["NET BORÇ/FAVÖK", "NET BORC/FAVOK", "NETBORÇ/FAVÖK", "NETBORC/FAVOK"],
-        "FD/FAVÖK": ["FD / FAVÖK", "FD/FAVOK", "FD / FAVOK"],
-        "BİLANÇO SONRASI": ["BILANCO SONRASI", "BİLANÇO PD", "BILANCO PD", "BİLANÇO PDDD", "BILANCO PDDD"],
+        "FD/FAVÖK": ["FD / FAVÖK", "FD/FAVOK", "FD / FAVOK", "FD FAVÖK"],
+        "ALFA": ["ALFA PUANI"],
+        "BİLANÇO SONRASI": ["BILANCO SONRASI", "BİLANÇO PD", "BILANCO PD"],
+        "BİLANÇO SONRASI XU100": ["BILANCO SONRASI XU100", "BİLANÇO SONRASI BIST100", "BILANCO SONRASI BIST100"],
     }
 
     _secili_sabit = []
@@ -890,17 +1047,16 @@ with sidebar_kpi_placeholder.container():
     if _bulunamayan:
         st.warning("KPI sabitlemede bulunamayan sütun(lar): " + ", ".join(_bulunamayan))
 
-    # Widget state'i sabit listeye çek (kullanıcı değiştirirse bile geri sabitlenir)
+    # Widget state'i sabit listeye çek
     st.session_state["kpi_cols"] = _secili_sabit
 
     # Sidebar'da sadece görüntüle (değiştirmeye kapalı)
     st.multiselect(
         "KPI Kartları (sabit):",
         _tum_kpi_cols,
-        default=_secili_sabit,
         key="kpi_cols",
         label_visibility="collapsed",
-        disabled=True
+        disabled=True,
     )
 
     # Kalıcı kaydet (dashboard tekrar açıldığında da aynı gelsin)
@@ -918,40 +1074,70 @@ with sidebar_ozet_placeholder.container():
 
     sec_hisse = st.selectbox("Hisse:", sorted(set(h for df in {**ham_data,**snap_data}.values() for h in df["Hisse"].dropna().unique() if str(h).strip())), key="ozet_hisse")
 
-    _dd_ozet = merged_data
-    tum_m_det = sorted(set(
-        c for df in _dd_ozet.values()
-        for c in df.columns
-        if c not in ["Hisse", "Sektör"]
-        and not pd.to_numeric(
-            df[df["Hisse"] == sec_hisse][c] if sec_hisse in df["Hisse"].values else pd.Series(dtype=float),
-            errors="coerce").isna().all()
-    ))
-    tum_m_det_genisletilmis = sorted(set(
-        tum_m_det +
-        ([c for c in puan_data.columns if c not in ["Hisse","Sektör"]] if not puan_data.empty else []) +
-        ([c for c in son_data.columns  if c not in ["Hisse","Sektör"]] if not son_data.empty  else [])
-    ))
-    SABIT_METRIKLER = ["SATIŞLAR Y","BRÜT KAR Y","EFK Y","NAKİT Y","Net Borç","ÖZKAYNAKLAR"]
-    _m_det_kayit = st.session_state.get("ozet_grafikler_kayit", [])
-    _m_det_kayit = [m for m in _m_det_kayit if m in tum_m_det_genisletilmis]
-    if not _m_det_kayit:
-        _m_det_kayit = [m for m in SABIT_METRIKLER if m in tum_m_det_genisletilmis]
+    tum_ozet_sayfalari = tum_veri_sayfalari()
+    _ozet_kaynak_kayit = st.session_state.get("ozet_kaynak_sayfasi") or (tum_ozet_sayfalari[0] if tum_ozet_sayfalari else "")
+    _ozet_idx = tum_ozet_sayfalari.index(_ozet_kaynak_kayit) if _ozet_kaynak_kayit in tum_ozet_sayfalari else 0
+    if tum_ozet_sayfalari and st.session_state.get("ozet_kaynak_sayfasi") not in tum_ozet_sayfalari:
+        st.session_state["ozet_kaynak_sayfasi"] = tum_ozet_sayfalari[_ozet_idx]
+    sec_ozet_kaynak = st.selectbox("Kaynak sayfa:", tum_ozet_sayfalari, index=_ozet_idx, key="ozet_kaynak_sayfasi")
+
+    tum_m_det = sayfa_metrikleri_getir(sec_ozet_kaynak, hisse=sec_hisse, sadece_sayisal=True)
+    VARSAYILAN_GRAFIKLER = ["SATIŞLAR Y","BRÜT KAR Y","EFK Y","NAKİT Y",
+                            "NET BORÇ","ÖZKAYNAKLAR","BRÜT MARJ","EFK MARJI"]
+    _grafik_alternatifler = {
+        "SATIŞLAR Y": ["SATISLAR Y","SATIŞLAR","SATISLAR"],
+        "BRÜT KAR Y": ["BRUT KAR Y","BRÜT KAR","BRUT KAR"],
+        "EFK Y": ["EFK"],
+        "NAKİT Y": ["NAKIT Y","NAKİT","NAKIT"],
+        "NET BORÇ": ["NET BORC"],
+        "ÖZKAYNAKLAR": ["OZKAYNAKLAR","ÖZ KAYNAKLAR","OZ KAYNAKLAR"],
+        "BRÜT MARJ": ["BRUT MARJ","BRÜT MARJI","BRUT MARJI"],
+        "EFK MARJI": ["EFK MARJ"],
+    }
+    # Sabit grafik listesini mevcut sütunlardan eşleştir
+    _grafik_sabit = []
+    _gnorm2col = {}
+    for _gc in tum_m_det:
+        _gnorm2col[_kpi_norm(_gc)] = _gc
+    for _gw in VARSAYILAN_GRAFIKLER:
+        _gfound = _gnorm2col.get(_kpi_norm(_gw))
+        if not _gfound:
+            for _galt in _grafik_alternatifler.get(_gw, []):
+                _gfound = _gnorm2col.get(_kpi_norm(_galt))
+                if _gfound:
+                    break
+        if _gfound:
+            _grafik_sabit.append(_gfound)
+    _grafik_sabit = list(dict.fromkeys(_grafik_sabit))
+    if not _grafik_sabit:
+        _grafik_sabit = tum_m_det[:8]
+
+    # Grafik seçimini zorla sabit tut
+    st.session_state["m_det_ozet"] = _grafik_sabit
     sec_m_det = st.multiselect(
-        "Grafikler:", tum_m_det_genisletilmis,
-        default=_m_det_kayit,
-        key="m_det_ozet"
+        "Grafikler (sabit):", tum_m_det,
+        key="m_det_ozet",
+        disabled=True,
     )
-    if sec_m_det != st.session_state.get("ozet_grafikler_son"):
-        st.session_state.ozet_grafikler_son = sec_m_det
-        st.session_state.ozet_grafikler_kayit = sec_m_det
-        _kayit_simdiki = ayarlari_yukle()
-        _kayit_simdiki["ozet_grafikler"] = sec_m_det
-        ayarlari_kaydet(_kayit_simdiki)
+    sec_m_det = _grafik_sabit
+    ozet_kaynak_serisi = ozet_seri_kaynaklari_getir(sec_ozet_kaynak)
+    ozet_kaynak_donemsel = ozet_kaynak_donemsel_mi(sec_ozet_kaynak)
     n_donem_det = st.selectbox("Son kaç çeyrek:", [4, 5, 6, 8], index=1, key="nd1_det")
 
 if aktif_sayfa != "🏆 Puan Tablosu":
-    st.markdown(snap_amblem_html(), unsafe_allow_html=True)
+    _sayfa_baslik = aktif_sayfa.split(" ", 1)[-1] if " " in aktif_sayfa else aktif_sayfa
+    st.markdown(f"""
+    <div style="background:#0B1220;padding:18px 28px;border-radius:14px;margin-bottom:20px;
+                border-bottom:3px solid #60A5FA;display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span style="font-size:24px;font-weight:800;letter-spacing:-0.03em;">
+          <span style="color:#A855F7;">S</span><span style="color:#22D3EE;">NAP</span>
+        </span>
+        <span style="font-size:13px;color:{MAIN_SOLUK};font-weight:400;letter-spacing:0.02em;">sai amatör yatırım</span>
+      </div>
+      <span style="font-size:22px;font-weight:700;color:#FFFFFF;letter-spacing:-0.01em;">{_sayfa_baslik}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 def kaynak_coz(sec):
     if sec in ham_data: return ham_data[sec].copy()
@@ -1018,31 +1204,51 @@ if aktif_sayfa == "📋 Özet":
     def _kpi_card_html(col, row, pct_cols):
         v = row.get(col)
         _PCT_ANAHTAR = ["MARJ","GETİRİ","GETIRI","BÜYÜME","BUYUME","ORAN","YÜZDE","YUZDE","ROTE","ROIC","ROE","ROA"]
+        _PCT_HARIC = ["PDDD", "PD/DD", "NET BORÇ/FAVÖK", "NET BORC/FAVOK",
+                      "NET BORÇ / FAVÖK", "FD/FAVÖK", "FD / FAVÖK", "FD/FAVOK",
+                      "FD FAVÖK", "ALFA", "BİLANÇO SONRASI", "BILANCO SONRASI",
+                      "BİLANÇO SONRASI XU100", "BILANCO SONRASI XU100",
+                      "SNAP", "NAKİT AKIŞ PUANI", "GELİR TABLOSU PUANI"]
         try:
             fv = float(v)
+            _col_up = col.upper().replace(" ", "").replace("／", "/")
+            _haric_mi = any(_col_up == h.upper().replace(" ", "").replace("／", "/") for h in _PCT_HARIC)
             if v is None or (isinstance(fv, float) and __import__("math").isnan(fv)):
                 g = "—"
+            elif _haric_mi:
+                g = tr_kpi(fv)
             elif col in pct_cols or any(k in col.upper() for k in _PCT_ANAHTAR):
                 g = tr_fmt(fv, 2) + " %"
             else:
                 g = tr_kpi(fv)
         except:
             g = str(v) if v else "—"
+        # SNAP değeri logo renkleriyle gösterilsin (mor→cyan gradient)
+        _col_norm_snap = col.upper().replace(" ", "")
+        if _col_norm_snap == "SNAP":
+            val_html = (f'<span style="font-size:18px;font-weight:800;letter-spacing:-0.02em;'
+                        f'white-space:nowrap;flex-shrink:0;text-align:right;'
+                        f'background:linear-gradient(90deg,#A855F7,#22D3EE);'
+                        f'-webkit-background-clip:text;-webkit-text-fill-color:transparent;'
+                        f'background-clip:text;">'
+                        f'{g}</span>')
+        else:
+            val_html = (f'<span style="color:#FFFFFF;font-size:18px;font-weight:800;'
+                        f'letter-spacing:-0.02em;white-space:nowrap;flex-shrink:0;text-align:right;">'
+                        f'{g}</span>')
         return (
-            '<div style="background:#FFFFFF;border:1px solid #CBD5E1;border-radius:12px;'
-            'padding:12px 18px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-height:62px;'
-            'display:flex;align-items:center;gap:8px;">'
-            '<span style="color:#1F4E79;font-size:14px;font-weight:700;'
-            'letter-spacing:0.02em;text-transform:uppercase;line-height:1.3;flex:1;">'
+            f'<div style="background:{MAIN_CARD};border:1px solid {MAIN_BORDER};border-left:3px solid #60A5FA;border-radius:10px;'
+            f'padding:8px 10px;box-shadow:0 1px 4px rgba(0,0,0,0.2);min-height:48px;'
+            f'display:flex;align-items:center;gap:4px;">'
+            f'<span style="color:#22D3EE;font-size:14px;font-weight:700;'
+            f'letter-spacing:0.02em;text-transform:uppercase;line-height:1.2;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;">'
             f'{col}</span>'
-            '<span style="color:#0A3D6E;font-size:18px;font-weight:800;'
-            'letter-spacing:-0.02em;white-space:nowrap;flex:1;text-align:center;">'
-            f'{g}</span></div>'
+            f'{val_html}</div>'
         )
 
     header_kpi_html = ""
     if _kpi_row and sec_kpi:
-        for col in sec_kpi[:3]:
+        for col in sec_kpi[:4]:
             header_kpi_html += _kpi_card_html(col, _kpi_row, _pct_cols_kpi)
 
     # ── Sağ boşlukta gösterilecek: Son PD (mr) ──
@@ -1069,55 +1275,62 @@ if aktif_sayfa == "📋 Özet":
                 son_pd_mr = tr_fmt(pd_fv / 1_000_000_000, 1) + " mr"
 
     st.markdown(f"""
-    <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;
-                gap:10px;margin-bottom:10px;align-items:stretch;">
-      <div style="background:{MAIN_SURFACE};border:1px solid {MAIN_BORDER};border-radius:12px;
-                  padding:14px 22px;min-height:62px;
-                  display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:14px;flex-wrap:wrap;">
-        <span style="font-size:24px;font-weight:800;color:{MAIN_BASLIK};letter-spacing:-0.02em;line-height:1;">{sec_hisse}</span>
-        <span style="font-size:12px;color:{MAIN_SOLUK};background:{MAIN_BG};
-                     padding:3px 12px;border-radius:20px;border:1px solid {MAIN_BORDER};
-                     word-break:break-word;white-space:normal;line-height:1.4;">{sektoru_ozet}</span>
-        <span style="margin-left:auto;font-size:18px;font-weight:800;color:{MAIN_BASLIK};
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);
+                gap:6px;margin-bottom:6px;align-items:stretch;">
+      <div style="background:{MAIN_CARD};border:1px solid {MAIN_BORDER};border-left:3px solid #60A5FA;border-radius:10px;
+                  padding:8px 10px;min-height:48px;
+                  display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;flex-wrap:wrap;">
+        <span style="font-size:16px;font-weight:800;color:#FFFFFF;letter-spacing:-0.02em;line-height:1;">{sec_hisse}</span>
+        <span style="font-size:9px;color:{MAIN_SOLUK};background:{MAIN_SURFACE};
+                     padding:2px 6px;border-radius:12px;border:1px solid {MAIN_BORDER};
+                     word-break:break-word;white-space:normal;line-height:1.3;max-width:60px;overflow:hidden;text-overflow:ellipsis;">{sektoru_ozet}</span>
+        <span style="margin-left:auto;font-size:18px;font-weight:800;color:#FFFFFF;
                      letter-spacing:-0.02em;white-space:nowrap;">{son_pd_mr}</span>
       </div>
       {header_kpi_html}
     </div>
     """, unsafe_allow_html=True)
 
-    if _kpi_row and sec_kpi and len(sec_kpi) > 3:
+    if _kpi_row and sec_kpi and len(sec_kpi) > 4:
         kalan_cards = ""
-        for col in sec_kpi[3:12]:
+        for col in sec_kpi[4:]:
             kalan_cards += _kpi_card_html(col, _kpi_row, _pct_cols_kpi)
         st.markdown(
-            '<div style="display:grid;grid-template-columns:repeat(4,1fr);'
-            'gap:10px;margin-bottom:18px;">' + kalan_cards + '</div>',
+            '<div style="display:grid;grid-template-columns:repeat(5,1fr);'
+            'gap:6px;margin-bottom:12px;">' + kalan_cards + '</div>',
             unsafe_allow_html=True
         )
 
     st.markdown(f"<hr style='border-color:{MAIN_GRID};margin:20px 0 14px 0;'>", unsafe_allow_html=True)
-    st.markdown(f"<p style='color:{MAIN_BASLIK};font-weight:700;font-size:15px;margin-bottom:12px;'>📊 Çeyreklik Detay <span style='font-size:12px;font-weight:400;color:{MAIN_SOLUK};'>(Mn TL)</span></p>", unsafe_allow_html=True)
+    _ozet_alt_not = "(Mn TL)" if ozet_kaynak_donemsel else f"({sec_ozet_kaynak})"
+    st.markdown(f"<p style='color:{MAIN_BASLIK};font-weight:700;font-size:15px;margin-bottom:12px;'>📊 Detay Grafikler <span style='font-size:12px;font-weight:400;color:{MAIN_SOLUK};'>{_ozet_alt_not}</span></p>", unsafe_allow_html=True)
 
     if sec_m_det:
-        donem_sirasi_det = [d for d, _, _ in reversed(DONEM_SAYFALARI)]
-        secili_donemler_det = []
+        secili_x_det = []
         metrik_verileri_det = {m: [] for m in sec_m_det}
+        pct_metrikleri_det = {m: False for m in sec_m_det}
 
-        for donem in donem_sirasi_det:
-            if donem not in dd: continue
-            df_d = dd[donem]
-            if sec_hisse not in df_d["Hisse"].values: continue
+        for x_etiketi, kaynak_sayfa in ozet_kaynak_serisi:
+            df_d = sayfa_verisi_getir(kaynak_sayfa)
+            if df_d.empty or "Hisse" not in df_d.columns or sec_hisse not in df_d["Hisse"].values:
+                continue
             satir = df_d[df_d["Hisse"] == sec_hisse].iloc[0]
             for m in sec_m_det:
-                v = pd.to_numeric(satir.get(m, np.nan), errors="coerce") if m in df_d.columns else np.nan
+                if m in df_d.columns:
+                    v = pd.to_numeric(pd.Series([satir.get(m, np.nan)]), errors="coerce").iloc[0]
+                    if m in df_d.attrs.get("pct_cols", set()):
+                        pct_metrikleri_det[m] = True
+                else:
+                    v = np.nan
                 metrik_verileri_det[m].append(v)
-            secili_donemler_det.append(donem)
+            secili_x_det.append(x_etiketi)
 
-        secili_donemler_det = secili_donemler_det[-n_donem_det:]
-        for m in sec_m_det:
-            metrik_verileri_det[m] = metrik_verileri_det[m][-n_donem_det:]
+        if ozet_kaynak_donemsel:
+            secili_x_det = secili_x_det[-n_donem_det:]
+            for m in sec_m_det:
+                metrik_verileri_det[m] = metrik_verileri_det[m][-n_donem_det:]
 
-        if secili_donemler_det:
+        if secili_x_det:
             metrik_listesi_det = [m for m in sec_m_det
                                   if any(v is not None and not np.isnan(v) for v in metrik_verileri_det[m])]
             satirlar_det = [metrik_listesi_det[i:i+4] for i in range(0, len(metrik_listesi_det), 4)]
@@ -1136,28 +1349,23 @@ if aktif_sayfa == "📋 Özet":
                             else: renkler.append(st.session_state.bar_tek_renk or (YESIL if _ters_renk else KIRMIZI))
 
                         _PCT_K = ["MARJ","GETİRİ","GETIRI","BÜYÜME","BUYUME","ORAN","ROTE","ROIC","ROE","ROA","YÜZDE"]
-                        _is_pct_metrik = any(k in metrik.upper() for k in _PCT_K)
-                        if not _is_pct_metrik:
-                            for _src in [puan_data, son_data] + list(merged_data.values())[:1]:
-                                if not _src.empty and metrik in _src.attrs.get("pct_cols", set()):
-                                    _is_pct_metrik = True
-                                    break
+                        _is_pct_metrik = pct_metrikleri_det.get(metrik, False) or any(k in metrik.upper() for k in _PCT_K)
 
                         def _fmt_bar(v):
                             if v is None or (isinstance(v, float) and np.isnan(v)): return "—"
                             if _is_pct_metrik: return tr_fmt(float(v), 2) + " %"
-                            return fmt_mn(v)
+                            return fmt_mn(v) if ozet_kaynak_donemsel else tr_df_fmt(v)
 
                         fig_det = go.Figure()
                         fig_det.add_trace(go.Bar(
-                            x=secili_donemler_det, y=degerler,
+                            x=secili_x_det, y=degerler,
                             marker_color=renkler,
                             text=[_fmt_bar(v) for v in degerler],
                             textposition="outside",
-                            textfont=dict(size=13, color=MAIN_BASLIK, family="Inter"),
+                            textfont=dict(size=16, color=MAIN_BASLIK, family="Segoe UI, Arial, sans-serif"),
                             name=metrik,
                         ))
-                        trend_x = [secili_donemler_det[k] for k, v in enumerate(degerler) if v is not None and not np.isnan(v)]
+                        trend_x = [secili_x_det[k] for k, v in enumerate(degerler) if v is not None and not np.isnan(v)]
                         trend_y = [v for v in degerler if v is not None and not np.isnan(v)]
                         if len(trend_y) >= 2:
                             fig_det.add_trace(go.Scatter(
@@ -1178,16 +1386,18 @@ if aktif_sayfa == "📋 Özet":
 
                         fig_det.update_layout(
                             height=320, showlegend=False, margin=dict(l=8, r=8, t=42, b=8),
-                            title=dict(text=f"<b>{metrik}</b>", font=dict(color=MAIN_BASLIK, size=12), x=0),
+                            title=dict(text=f"<b>{metrik}</b>", font=dict(color=MAIN_BASLIK, size=15), x=0),
                             paper_bgcolor=MAIN_BG, plot_bgcolor=MAIN_SURFACE,
-                            font=dict(color=MAIN_BASLIK, size=11),
+                            font=dict(color=MAIN_BASLIK, size=13, family="Segoe UI, Arial, sans-serif"),
                             xaxis=dict(showgrid=False, color=MAIN_BASLIK, tickangle=-30,
-                                       tickfont=dict(size=10, color=MAIN_BASLIK),
-                                       categoryorder="array", categoryarray=secili_donemler_det),
+                                       tickfont=dict(size=12, color=MAIN_BASLIK),
+                                       categoryorder="array", categoryarray=secili_x_det),
                             yaxis=dict(gridcolor=MAIN_GRID, color=MAIN_BASLIK, showticklabels=False, range=_yrange),
                             bargap=0.30,
                         )
                         st.plotly_chart(fig_det, use_container_width=True)
+        else:
+            st.warning(f"`{sec_hisse}` için `{sec_ozet_kaynak}` kaynağında gösterilecek veri bulunamadı.")
 
 # ══ SAYFA 2 — METRİK TABLOSU ══════════════════
 if aktif_sayfa == "📊 Metrik Tablosu":
@@ -1468,65 +1678,77 @@ if aktif_sayfa == "📈 Çeyreklik Trend":
 # ══ SAYFA 6 — PUAN TABLOSU ══════════════════
 @st.fragment
 def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data):
-    st.markdown("### 🏆 Puan Tablosu")
+    def _filtre6_state_temizle():
+        st.session_state.filtre6_sayisi = 1
+        for _k in list(st.session_state.keys()):
+            if _k.startswith("f6m") or _k.startswith("f6op") or _k.startswith("f6e"):
+                del st.session_state[_k]
 
-    if "filtre6_sayisi" not in st.session_state: st.session_state.filtre6_sayisi = 1
+    if "filtre6_sayisi" not in st.session_state:
+        st.session_state.filtre6_sayisi = 1
 
-    base6 = pd.DataFrame()
+    kaynak6_liste = tum_veri_sayfalari()
+    _kaynak6_kayit = st.session_state.get("puan_kaynak_sayfasi") or (PUAN_SAYFASI if PUAN_SAYFASI in kaynak6_liste else kaynak6_liste[0])
+    _kaynak6_idx = kaynak6_liste.index(_kaynak6_kayit) if _kaynak6_kayit in kaynak6_liste else 0
+    if kaynak6_liste and st.session_state.get("puan_kaynak_sayfasi") not in kaynak6_liste:
+        st.session_state["puan_kaynak_sayfasi"] = kaynak6_liste[_kaynak6_idx]
+    # kaynak6 selectbox tablonun altında renderlenecek, burada sadece değeri oku
+    kaynak6 = st.session_state.get("puan_kaynak_sayfasi", kaynak6_liste[_kaynak6_idx])
 
-    def _merge6(base, yeni, suffix):
-        if yeni.empty: return base
-        yeni = yeni.copy()
-        if base.empty: return yeni
-        ortak = [c for c in yeni.columns if c in base.columns and c not in ["Hisse", "Sektör"]]
-        yeni = yeni.rename(columns={c: f"{c}_{suffix}" for c in ortak})
-        return base.merge(yeni.drop(columns=["Sektör"], errors="ignore"), on="Hisse", how="outer")
+    if st.session_state.get("_puan_kaynak_sayfa_onceki") != kaynak6:
+        _filtre6_state_temizle()
+    st.session_state["_puan_kaynak_sayfa_onceki"] = kaynak6
 
-    if not puan_data.empty: base6 = puan_data.copy()
-    if not son_data.empty: base6 = _merge6(base6, son_data, "son")
-    if not ayar_data.empty and "Hisse" in ayar_data.columns: base6 = _merge6(base6, ayar_data, "ayar")
-    for _cikti_adi, _cikti_df in cikti_data.items():
-        if not _cikti_df.empty: base6 = _merge6(base6, _cikti_df, _cikti_adi)
-
+    base6 = sayfa_verisi_getir(kaynak6)
     if base6.empty:
-        st.warning("Veri okunamadı.")
+        st.warning(f"`{kaynak6}` sayfası boş veya okunamadı.")
         return
 
-    if "Hisse" in base6.columns: base6["Sektör"] = base6["Hisse"].map(sektor_map).fillna("Diğer")
-    tum_cols6 = puan_sabit_filtrele(
-        [c for c in base6.columns if c not in ["Hisse", "Sektör"]],
-        PUAN_SABIT_SUTUNLAR,
-    )
+    if "Hisse" in base6.columns:
+        base6["Sektör"] = base6["Hisse"].map(sektor_map).fillna("Diğer")
+
+    tum_cols6 = puan_kolon_sirasi([c for c in base6.columns if c not in ["Hisse", "Sektör"]])
+    if not tum_cols6:
+        st.warning(f"`{kaynak6}` sayfasında gösterilecek metrik bulunamadı.")
+        return
 
     sec_s6 = st.session_state.get("s6", "Tümü")
     yon6   = st.session_state.get("y6", "↓")
 
-    _m6_kayit = puan_sabit_filtrele(
-        tum_cols6,
-        st.session_state.get("puan_m6_kayit", PUAN_SABIT_SUTUNLAR),
-    )
-    _alfa_eslesme = puan_sabit_filtrele(tum_cols6, ["ALFA"])
-    if _alfa_eslesme:
+    _puan_m6_map = st.session_state.get("puan_m6_map", {})
+    if not isinstance(_puan_m6_map, dict):
+        _puan_m6_map = {}
+
+    _m6_kayit = _puan_m6_map.get(kaynak6, st.session_state.get("puan_m6_kayit", []))
+    if kaynak6 == PUAN_SAYFASI:
+        _m6_kayit = puan_sabit_filtrele(tum_cols6, _m6_kayit or PUAN_SABIT_SUTUNLAR)
+        _alfa_eslesme = puan_sabit_filtrele(tum_cols6, ["ALFA"])
         for _col in _alfa_eslesme:
             if _col not in _m6_kayit:
                 _m6_kayit.append(_col)
-    if not _m6_kayit: _m6_kayit = puan_sabit_filtrele(tum_cols6) or tum_cols6[:6]
+        if not _m6_kayit:
+            _m6_kayit = puan_sabit_filtrele(tum_cols6) or tum_cols6[:6]
+    else:
+        _m6_kayit = [c for c in _m6_kayit if c in tum_cols6]
+        if not _m6_kayit:
+            _m6_kayit = tum_cols6[:6]
     _m6_kayit = puan_kolon_sirasi(_m6_kayit)
-    _m6_state = st.session_state.get("m6", [])
-    _m6_state_filtreli = puan_sabit_filtrele(tum_cols6, _m6_state)
-    if _alfa_eslesme:
-        for _col in _alfa_eslesme:
-            if _col not in _m6_state_filtreli:
-                _m6_state_filtreli.append(_col)
-    _m6_state_filtreli = puan_kolon_sirasi(_m6_state_filtreli or _m6_kayit)
-    if _m6_state_filtreli != _m6_state:
-        st.session_state["m6"] = _m6_state_filtreli or _m6_kayit
-    sec_m6 = puan_kolon_sirasi(_m6_kayit)
+
+    _m6_state = [c for c in st.session_state.get("m6", []) if c in tum_cols6]
+    if st.session_state.get("_puan_m6_kaynak_onceki") != kaynak6:
+        st.session_state["m6"] = _m6_kayit
+    elif _m6_state != st.session_state.get("m6", []):
+        st.session_state["m6"] = _m6_state or _m6_kayit
+    st.session_state["_puan_m6_kaynak_onceki"] = kaynak6
+
+    sec_m6 = puan_kolon_sirasi([c for c in st.session_state.get("m6", _m6_kayit) if c in tum_cols6] or _m6_kayit)
+    if sec_m6 != st.session_state.get("m6", []):
+        st.session_state["m6"] = sec_m6
 
     _sira_opts = [c for c in sec_m6 if c in tum_cols6]
     sira6 = st.session_state.get("sr6")
-    if sira6 not in _sira_opts: sira6 = _sira_opts[0] if _sira_opts else None
-    if st.session_state.get("sr6") != sira6:
+    if sira6 not in _sira_opts:
+        sira6 = _sira_opts[0] if _sira_opts else None
         st.session_state["sr6"] = sira6
 
     filtre6_kriterler = []
@@ -1576,197 +1798,217 @@ def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data
         _sort_key = pd.to_numeric(tablo6[sira6], errors="coerce")
         tablo6 = tablo6.assign(_sort_key=_sort_key).sort_values("_sort_key", ascending=(yon6 == "↑"), na_position="last").drop(columns=["_sort_key"]).reset_index(drop=True)
 
-    tablo6.insert(0, "#", range(1, len(tablo6) + 1))
-    st.markdown(
-        f"""
-        <div style='display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:2px 0 10px 0;'>
-          {snap_amblem_html(compact=True)}
-          <div style='padding-top:4px;color:{MAIN_SOLUK};font-size:13px;font-weight:700;white-space:nowrap;'>{len(tablo6)} hisse</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    tablo6_goster = tablo6.drop(columns=["#"]).reset_index(drop=True)
+    tablo6_goster = tablo6.reset_index(drop=True)
     tablo6_goster.index = tablo6_goster.index + 1
     tablo6_goster = tablo6_goster[puan_kolon_sirasi(tablo6_goster.columns.tolist())]
 
     if tablo6_goster.empty or len([c for c in tablo6_goster.columns if c not in ["Hisse","Sektör"]]) == 0:
         st.warning("Gösterilecek sütun seçilmedi. Aşağıdan sütun seçin.")
     else:
-        import streamlit.components.v1 as _comp
-        import math as _math
+        # ── AgGrid: DataFrame'i formatla ──
+        _ag_df = tablo6_goster.copy()
+        for _c in _ag_df.columns:
+            if _c not in ["Hisse", "Sektör"] and not puan_donem_sutunu_mu(_c):
+                _ag_df[_c] = pd.to_numeric(_ag_df[_c], errors="coerce")
 
-        def _col_default_w(col_name, col_idx):
-            cn = col_name.upper()
-            if col_idx == 0:   return 70
-            if "SEKTÖR" in cn or "SEKTOR" in cn: return 152
-            if len(col_name) <= 4:  return 80
-            if len(col_name) <= 8:  return 95
-            return 110
+        # Ters-iyi sütunları belirle (borç, PD/DD vb. — pozitif=kötü)
+        _ters_cols = [c for c in _ag_df.columns if puan_ters_iyi_sutunu_mu(c)]
 
-        def _html_puan_tablosu(df):
-            cols = list(df.columns)
-            default_widths = [_col_default_w(c, j) for j, c in enumerate(cols)]
+        # Flex hizalama sabitleri
+        _FLEX_LEFT  = "'display':'flex','alignItems':'center','justifyContent':'flex-start','paddingLeft':'8px'"
+        _FLEX_RIGHT = "'display':'flex','alignItems':'center','justifyContent':'flex-end','paddingRight':'8px'"
+        _FLEX_CENTER = "'display':'flex','alignItems':'center','justifyContent':'center'"
 
-            th_base = (f"background:{PUAN_HEADER_BG};color:#FFFFFF;font-size:11px;font-weight:700;"
-                       "letter-spacing:0.05em;text-transform:uppercase;"
-                       f"padding:10px 22px 10px 10px;border-right:1px solid {PUAN_HEADER_DIVIDER};"
-                       f"border-bottom:3px solid {PUAN_HEADER_BORDER};"
-                       "white-space:normal;word-break:break-word;vertical-align:middle;")
-            header_html = "<tr>"
-            for j, c in enumerate(cols):
-                align = "center"
-                w = default_widths[j]
-                header_html += (f"<th data-col='{j}' style='text-align:{align};{th_base}"
-                                f"width:{w}px;min-width:40px;'>{c}<div class='resizer'></div></th>")
-            header_html += "</tr>"
+        # Yüzde formatter: %1,08 / %-3,15 (Türkçe ondalık virgül, % solda)
+        _pct_formatter = JsCode("""function(params) {
+            if (params.value == null || params.value === '') return '';
+            return '%' + Number(params.value).toFixed(2).replace('.', ',');
+        }""")
+        # Puan formatter: 1 ondalık, Türkçe virgül (6,0 / 9,5)
+        _score_formatter = JsCode("""function(params) {
+            if (params.value == null || params.value === '') return '';
+            return Number(params.value).toFixed(1).replace('.', ',');
+        }""")
 
-            td_base = ("font-size:13px;padding:8px 10px;"
-                       "border-bottom:1px solid #E2E8F0;border-right:1px solid #F1F5F9;"
-                       "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
-            rows_html = ""
-            for row_pos, (_, row) in enumerate(df.iterrows()):
-                bg = puan_satir_rengi(row_pos)
-                cells = ""
-                for j, c in enumerate(cols):
-                    v = row[c]
-                    _v_str = str(v).strip() if v is not None else ""
-                    _is_empty = (v is None or _v_str == "" or _v_str.lower() in ("none", "nan", "nat", "-"))
-                    _is_snap_col = normalize_col(c) == normalize_col("SNAP")
-                    _renk = puan_hucre_yazi_rengi(c, v)
-                    try:
-                        if _is_empty: raise ValueError("boş")
-                        fv = float(v)
-                        if _math.isnan(fv): raise ValueError
-                        disp = tr_df_fmt(fv)
-                        _agirlik = "700" if (_is_snap_col or j == 0 or j >= 2) else "500"
-                        color = f"{_renk};font-weight:{_agirlik};"
-                    except:
-                        if _is_empty:
-                            disp = "—"
-                            color = f"{_renk};"
-                        else:
-                            disp = _v_str
-                            _agirlik = "700" if (_is_snap_col or j == 0) else "500"
-                            color = f"{_renk};font-weight:{_agirlik};"
-                    align = "right" if j >= 2 else "left"
-                    w = default_widths[j]
-                    _extra = f"max-width:{w}px;overflow:hidden;text-overflow:ellipsis;" if j == 1 else ""
-                    cells += (f"<td data-col='{j}' title='{disp}' style='text-align:{align};background:{bg};"
-                              f"width:{w}px;{_extra}{td_base}color:{color}'>{disp}</td>")
-                hover_in  = "onmouseover=\"this.style.background='#DDEAF7'\""
-                hover_out = f"onmouseout=\"this.style.background='{bg}'\""
-                rows_html += f"<tr {hover_in} {hover_out}>{cells}</tr>"
+        # Yüzde ve puan sütunlarını dinamik tespit et
+        _bilanco_sonrasi_col = next((c for c in _ag_df.columns
+            if normalize_col(c) == normalize_col("BİLANÇO SONRASI")), None)
+        _bilanco_xu100_col = next((c for c in _ag_df.columns
+            if normalize_col(c) == normalize_col("BİLANÇO SONRASI XU100")), None)
+        _nakit_puan_col = next((c for c in _ag_df.columns
+            if normalize_col(c) in (normalize_col("NAKİT"), normalize_col("NAKİT AKIŞ PUANI"))), None)
+        _gelir_puan_col = next((c for c in _ag_df.columns
+            if normalize_col(c) in (normalize_col("EFK"), normalize_col("GELİR TABLOSU PUANI"))), None)
+        _pct_cols_set = {c for c in [_bilanco_sonrasi_col, _bilanco_xu100_col] if c}
+        _score_cols_set = {c for c in [_nakit_puan_col, _gelir_puan_col] if c}
 
-            ss_key = "snap_col_widths_" + "_".join(str(w) for w in default_widths[:5])
-            html = f"""<!DOCTYPE html>
-<html>
-<head>
-<style>
-  * {{ box-sizing:border-box; }}
-  body {{ margin:0; font-family:Inter,sans-serif; }}
-  .wrap {{ overflow:auto; max-height:1150px; border-radius:10px;
-           border:2px solid {PUAN_HEADER_BG}; box-shadow:0 4px 20px rgba(79,129,189,0.16); }}
-  table {{ border-collapse:collapse; background:#FFFFFF; table-layout:fixed; }}
-  thead {{ position:sticky; top:0; z-index:10; }}
-  th {{ position:relative; overflow:hidden; }}
-  .resizer {{ position:absolute; right:0; top:0; height:100%; width:10px; cursor:col-resize; user-select:none; z-index:1; background:linear-gradient(to right, transparent 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0.6) 100%); transition:background 0.15s; }}
-  .resizer:hover, .resizer.dragging {{ background:rgba(255,255,255,0.85); }}
-</style>
-</head>
-<body>
-<div class="wrap"><table id="tbl"><thead>{header_html}</thead><tbody>{rows_html}</tbody></table></div>
-<script>
-(function() {{
-  var SS_KEY = "{ss_key}"; var table = document.getElementById("tbl"); var ths = Array.from(table.querySelectorAll("thead th"));
-  var saved = {{}}; try {{ var raw = sessionStorage.getItem(SS_KEY); if (raw) saved = JSON.parse(raw); }} catch(e) {{}}
-  function setColWidth(idx, w) {{ ths[idx].style.width = w + "px"; table.querySelectorAll("tbody tr").forEach(function(row) {{ var td = row.querySelector("[data-col='" + idx + "']"); if (td) td.style.width = w + "px"; }}); }}
-  function saveWidths() {{ var out = {{}}; ths.forEach(function(th, i) {{ out[i] = th.offsetWidth; }}); try {{ sessionStorage.setItem(SS_KEY, JSON.stringify(out)); }} catch(e) {{}} }}
-  ths.forEach(function(th, i) {{ var w = saved[i] !== undefined ? saved[i] : th.offsetWidth; setColWidth(i, w); }});
-  ths.forEach(function(th, i) {{
-    var resizer = th.querySelector(".resizer"); if (!resizer) return; var startX, startW;
-    resizer.addEventListener("mousedown", function(e) {{
-      startX = e.pageX; startW = th.offsetWidth; resizer.classList.add("dragging"); e.preventDefault();
-      function onMove(e) {{ setColWidth(i, Math.max(40, startW + (e.pageX - startX))); }}
-      function onUp() {{ resizer.classList.remove("dragging"); saveWidths(); document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }}
-      document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
-    }});
-  }});
-}})();
-</script>
-</body>
-</html>"""
-            return html
+        gb6 = GridOptionsBuilder.from_dataframe(_ag_df)
+        gb6.configure_default_column(
+            resizable=True,
+            filterable=True,
+            sortable=True,
+            minWidth=75,
+            maxWidth=120,
+            cellStyle={"display": "flex", "alignItems": "center", "justifyContent": "flex-end",
+                        "paddingRight": "8px", "fontWeight": "700"},
+            wrapHeaderText=True,
+            autoHeaderHeight=True,
+        )
 
-        _ss_mode = (time.time() - st.session_state.get("_screenshot_ts", 0) < 15)
+        # Hisse — sabit sol, cyan vurgu, SOLA YASLI
+        gb6.configure_column("Hisse", pinned="left", width=90, minWidth=70, maxWidth=100,
+            cellStyle=JsCode(f"""function(p) {{
+                return {{{_FLEX_LEFT},'color':'{PUAN_TERM_CYAN}','fontWeight':'800',
+                         'textShadow':'0 0 12px rgba(34,211,238,0.35)'}};
+            }}"""))
 
+        # Sektör — SOLA YASLI
+        gb6.configure_column("Sektör", width=180, minWidth=140, maxWidth=220,
+            cellStyle=JsCode(f"""function(p) {{
+                return {{{_FLEX_LEFT},'color':'{PUAN_TERM_MUTED}','fontWeight':'600'}};
+            }}"""))
 
-        if _ss_mode:
+        # SNAP — mor vurgu, SAĞA YASLI, puan formatı (1 ondalık)
+        _snap_col = next((c for c in _ag_df.columns if normalize_col(c) == normalize_col("SNAP")), None)
+        if _snap_col:
+            gb6.configure_column(_snap_col, width=80, minWidth=65, maxWidth=95,
+                valueFormatter=_score_formatter,
+                cellStyle=JsCode(f"""function(p) {{
+                    return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_PURPLE}','fontWeight':'800',
+                             'textShadow':'0 0 12px rgba(168,85,247,0.35)'}};
+                }}"""))
 
-            # html2canvas iframe içini yakalayamadığı için screenshot anında tabloyu Streamlit dataframe olarak basıyoruz
-            tablo6_ss = tablo6_goster.copy()
-            try:
-                tablo6_ss.insert(0, "#", list(tablo6_ss.index))
-            except Exception:
-                tablo6_ss.insert(0, "#", range(1, len(tablo6_ss) + 1))
-            _fmt_dict_ss = {c: tr_df_fmt for c in tablo6_ss.select_dtypes(include="number").columns.tolist()}
+        # ALFA — yeşil/kırmızı, SAĞA YASLI, yüzde formatı
+        _alfa_col = next((c for c in _ag_df.columns if normalize_col(c) == normalize_col("ALFA")), None)
+        if _alfa_col:
+            gb6.configure_column(_alfa_col, width=80, minWidth=65, maxWidth=95,
+                valueFormatter=_pct_formatter,
+                cellStyle=JsCode(f"""function(p) {{
+                    if (p.value == null) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_EMPTY}','fontWeight':'700'}};
+                    if (p.value > 0) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_SUCCESS}','fontWeight':'800',
+                                              'textShadow':'0 0 10px rgba(0,227,150,0.28)'}};
+                    if (p.value < 0) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_DANGER}','fontWeight':'800',
+                                              'textShadow':'0 0 10px rgba(255,69,96,0.28)'}};
+                    return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_TEXT}','fontWeight':'800'}};
+                }}"""))
 
-            def _ss_satir_stili(_row):
-                _bg = puan_satir_rengi(max(int(_row.name) - 1, 0))
-                return [f"background-color: {_bg}"] * len(_row)
+        # Dönem sütunları — ORTA HİZALI
+        for _c in _ag_df.columns:
+            if puan_donem_sutunu_mu(_c):
+                gb6.configure_column(_c, width=90, minWidth=70, maxWidth=110,
+                    cellStyle=JsCode(f"""function(p) {{
+                        return {{{_FLEX_CENTER},'color':'{PUAN_TERM_MUTED}','fontWeight':'700'}};
+                    }}"""))
 
-            def _ss_yazi_stili(df):
-                stiller = pd.DataFrame("", index=df.index, columns=df.columns)
-                for idx in df.index:
-                    for col in df.columns:
-                        _is_snap_col = normalize_col(col) == normalize_col("SNAP")
-                        _is_alfa_col = normalize_col(col) == normalize_col("ALFA")
-                        _renk = puan_hucre_yazi_rengi(col, df.at[idx, col])
-                        _agirlik = "700" if (_is_snap_col or _is_alfa_col or col == "#" or col == "Hisse") else "500"
-                        stiller.at[idx, col] = f"color: {_renk}; font-weight: {_agirlik}"
-                return stiller
+        # Ters-iyi sütunlar (borç, PD/DD vb.) — pozitif=kırmızı, negatif=yeşil, SAĞA YASLI
+        for _c in _ters_cols:
+            if _c in [_snap_col, _alfa_col]: continue
+            _vf = _pct_formatter if _c in _pct_cols_set else (_score_formatter if _c in _score_cols_set else None)
+            _col_kw = {"width": 85, "minWidth": 65, "maxWidth": 110,
+                "cellStyle": JsCode(f"""function(p) {{
+                    if (p.value == null) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_EMPTY}','fontWeight':'700'}};
+                    if (p.value > 0) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_DANGER}','fontWeight':'800',
+                                              'textShadow':'0 0 10px rgba(255,69,96,0.28)'}};
+                    if (p.value < 0) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_SUCCESS}','fontWeight':'800',
+                                              'textShadow':'0 0 10px rgba(0,227,150,0.28)'}};
+                    return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_TEXT}','fontWeight':'800'}};
+                }}""")}
+            if _vf: _col_kw["valueFormatter"] = _vf
+            gb6.configure_column(_c, **_col_kw)
 
-            _styled_ss = (
-                tablo6_ss.style
-                .format(_fmt_dict_ss, na_rep="—")
-                .hide(axis="index")
-                .apply(_ss_satir_stili, axis=1)
-                .apply(_ss_yazi_stili, axis=None)
-                .set_table_styles([
-                    {"selector": "table",
-                     "props": [("background-color", "#FFFFFF"), ("border-collapse", "collapse"), ("width", "100%")]},
-                    {"selector": "thead tr th",
-                     "props": [
-                         ("background-color", PUAN_HEADER_BG),
-                         ("color", "#FFFFFF"),
-                         ("font-weight", "700"),
-                         ("font-size", "12px"),
-                         ("letter-spacing", "0.05em"),
-                         ("text-transform", "uppercase"),
-                         ("text-align", "center"),
-                         ("vertical-align", "middle"),
-                         ("border-bottom", f"3px solid {PUAN_HEADER_BORDER}"),
-                         ("border-right", f"1px solid {PUAN_HEADER_DIVIDER}"),
-                         ("padding", "11px 14px"),
-                         ("white-space", "nowrap"),
-                     ]},
-                    {"selector": "tbody tr td",
-                     "props": [
-                         ("color", "#000000"),
-                         ("font-size", "13px"),
-                         ("font-weight", "500"),
-                         ("padding", "9px 14px"),
-                         ("border-bottom", "1px solid #D6E4F0"),
-                         ("border-right", "1px solid #EBF2FA"),
-                     ]},
-                    {"selector": "tbody tr td:first-child",
-                     "props": [("font-weight", "700"), ("color", "#000000")]},
-                ])
-            )
-            st.dataframe(_styled_ss, height=1200, use_container_width=True)
-        else:
-            _comp.html(_html_puan_tablosu(tablo6_goster), height=1200, scrolling=False)
+        # Normal sayısal sütunlar — pozitif=yeşil, negatif=kırmızı, SAĞA YASLI
+        _ozel_cols = {"Hisse", "Sektör", _snap_col, _alfa_col} | set(_ters_cols)
+        _ozel_cols |= {c for c in _ag_df.columns if puan_donem_sutunu_mu(c)}
+        _ozel_cols.discard(None)
+        for _c in _ag_df.columns:
+            if _c in _ozel_cols: continue
+            _vf = _pct_formatter if _c in _pct_cols_set else (_score_formatter if _c in _score_cols_set else None)
+            _col_kw = {"width": 85, "minWidth": 65, "maxWidth": 110,
+                "cellStyle": JsCode(f"""function(p) {{
+                    if (p.value == null) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_EMPTY}','fontWeight':'700'}};
+                    if (p.value > 0) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_SUCCESS}','fontWeight':'800',
+                                              'textShadow':'0 0 10px rgba(0,227,150,0.28)'}};
+                    if (p.value < 0) return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_DANGER}','fontWeight':'800',
+                                              'textShadow':'0 0 10px rgba(255,69,96,0.28)'}};
+                    return {{{_FLEX_RIGHT},'color':'{PUAN_TERM_TEXT}','fontWeight':'800'}};
+                }}""")}
+            if _vf: _col_kw["valueFormatter"] = _vf
+            gb6.configure_column(_c, **_col_kw)
+
+        gb6.configure_grid_options(rowHeight=32)
+        _grid_opts6 = gb6.build()
+
+        # Header ve satır koyu terminal teması
+        _ag_custom_css = {
+            ".ag-root-wrapper": {
+                "border": f"1px solid {PUAN_TERM_BORDER} !important",
+                "border-radius": "12px !important",
+            },
+            ".ag-header": {
+                "background-color": f"{PUAN_TERM_SURFACE_ALT} !important",
+                "border-bottom": f"2px solid {PUAN_TERM_CYAN} !important",
+            },
+            ".ag-header-cell-label": {
+                "color": f"{PUAN_TERM_CYAN} !important",
+                "font-size": "13px !important",
+                "font-weight": "800 !important",
+                "text-transform": "uppercase !important",
+                "letter-spacing": "0.08em !important",
+                "font-family": f"{PUAN_TERM_FONT} !important",
+                "justify-content": "center !important",
+                "text-align": "center !important",
+            },
+            ".ag-header-cell": {
+                "background-color": f"{PUAN_TERM_SURFACE_ALT} !important",
+                "border-right": f"1px solid {PUAN_TERM_BORDER} !important",
+                "display": "flex !important",
+                "align-items": "center !important",
+                "justify-content": "center !important",
+            },
+            ".ag-header-cell-comp-wrapper": {
+                "justify-content": "center !important",
+            },
+            ".ag-row": {
+                "background-color": f"{PUAN_TERM_BG} !important",
+                "border-bottom": f"1px solid {PUAN_TERM_BORDER} !important",
+                "font-family": f"{PUAN_TERM_FONT} !important",
+                "font-size": "15px !important",
+                "min-height": "40px !important",
+            },
+            ".ag-row-odd": {
+                "background-color": f"{PUAN_TERM_SURFACE} !important",
+            },
+            ".ag-cell": {
+                "border-right": f"1px solid {PUAN_TERM_BORDER} !important",
+                "display": "flex !important",
+                "align-items": "center !important",
+                "line-height": "1.2 !important",
+            },
+            ".ag-row-hover": {
+                "background-color": f"{PUAN_TERM_SURFACE_ALT} !important",
+            },
+            ".ag-root-wrapper-body": {
+                "background-color": f"{PUAN_TERM_BG} !important",
+            },
+            ".ag-body-viewport": {
+                "background-color": f"{PUAN_TERM_BG} !important",
+            },
+            ".ag-pinned-left-cols-container .ag-cell": {
+                "background-color": "inherit !important",
+            },
+        }
+
+        _tablo_yukseklik = min(1180, max(420, 40 + len(_ag_df) * 35))
+        AgGrid(
+            _ag_df,
+            gridOptions=_grid_opts6,
+            height=_tablo_yukseklik,
+            update_mode=GridUpdateMode.NO_UPDATE,
+            theme="alpine",
+            custom_css=_ag_custom_css,
+            allow_unsafe_jscode=True,
+            fit_columns_on_grid_load=False,
+        )
 
     import io as _io
     from datetime import datetime as _dt
@@ -1781,6 +2023,8 @@ def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data
 
     st.markdown("---")
     st.markdown(f"<p style='color:{ALTIN};font-weight:600;font-size:13px;margin-bottom:6px;'>⚙️ Tablo Ayarları</p>", unsafe_allow_html=True)
+
+    st.selectbox("Kaynak sayfa:", kaynak6_liste, index=_kaynak6_idx, key="puan_kaynak_sayfasi")
 
     sek_list6 = ["Tümü"] + sorted(base6["Sektör"].unique())
     _s6_idx = sek_list6.index(sec_s6) if sec_s6 in sek_list6 else 0
@@ -1797,11 +2041,22 @@ def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data
     if _m6_simdiki != st.session_state.get("m6", []):
         st.session_state["m6"] = _m6_simdiki
     _sr6_simdiki = st.session_state.get("sr6", "")
-    if _m6_simdiki != st.session_state.get("puan_m6_son"):
+    _puan_m6_map_yeni = dict(_puan_m6_map)
+    _puan_m6_map_yeni[kaynak6] = _m6_simdiki
+    if (
+        kaynak6 != st.session_state.get("puan_kaynak_sayfa_son")
+        or _m6_simdiki != _puan_m6_map.get(kaynak6, [])
+        or _sr6_simdiki != st.session_state.get("puan_sr6_son", "")
+    ):
+        st.session_state.puan_kaynak_sayfa_son = kaynak6
+        st.session_state.puan_sr6_son = _sr6_simdiki
         st.session_state.puan_m6_son   = _m6_simdiki
         st.session_state.puan_m6_kayit = _m6_simdiki
+        st.session_state.puan_m6_map = _puan_m6_map_yeni
         _k_simdiki = ayarlari_yukle()
+        _k_simdiki["puan_kaynak_sayfasi"] = kaynak6
         _k_simdiki["puan_m6"]  = _m6_simdiki
+        _k_simdiki["puan_m6_map"] = _puan_m6_map_yeni
         _k_simdiki["puan_sr6"] = _sr6_simdiki
         ayarlari_kaydet(_k_simdiki)
     with _b3: st.radio("Yön:", ["↓", "↑"], index=0 if yon6 == "↓" else 1, horizontal=True, key="y6")
@@ -1815,9 +2070,7 @@ def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data
             st.rerun(scope="fragment")
     with col_sifirla6:
         if st.button("🗑️ Filtreleri Sıfırla", key="f6_sifirla"):
-            st.session_state.filtre6_sayisi = 1
-            for _k in list(st.session_state.keys()):
-                if _k.startswith("f6m") or _k.startswith("f6op") or _k.startswith("f6e"): del st.session_state[_k]
+            _filtre6_state_temizle()
             st.rerun(scope="fragment")
 
     filtre6_sil = None
@@ -1850,6 +2103,18 @@ def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data
         st.rerun(scope="fragment")
 
 if aktif_sayfa == "🏆 Puan Tablosu":
+    st.markdown(f"""
+    <div style="background:#0B1220;padding:18px 28px;border-radius:14px;margin-bottom:20px;
+                border-bottom:3px solid #60A5FA;display:flex;align-items:center;justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <span style="font-size:24px;font-weight:800;letter-spacing:-0.03em;">
+          <span style="color:#A855F7;">S</span><span style="color:#22D3EE;">NAP</span>
+        </span>
+        <span style="font-size:13px;color:{MAIN_SOLUK};font-weight:400;letter-spacing:0.02em;">sai amatör yatırım</span>
+      </div>
+      <span style="font-size:22px;font-weight:700;color:#FFFFFF;letter-spacing:-0.01em;">Puan Tablosu</span>
+    </div>
+    """, unsafe_allow_html=True)
     puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data)
 
 # ══ SAYFA 7 — FORMÜL HESAPLAYICI ══════════════════
@@ -1986,24 +2251,24 @@ if aktif_sayfa == "🌍 Yabancı Akım":
 
         st.markdown(f"""
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:25px;">
-            <div style="background:{MAIN_CARD};border:1px solid {MAIN_BORDER};border-radius:12px;padding:20px;box-shadow:0 4px 6px rgba(0,0,0,0.05);border-left:4px solid {MAIN_BASLIK};">
-                <div style="color:{MAIN_SOLUK};font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">SON HAFTA AKIMI</div>
-                <div style="color:{YESIL if son_hafta['TOPLAM YABANCI AKIMI (mn $)'] > 0 else KIRMIZI};font-size:24px;font-weight:800;">{son_hafta['TOPLAM YABANCI AKIMI (mn $)']:+,.0f} Mn $</div>
+            <div style="background:{MAIN_CARD};border:2px solid {MAIN_BORDER};border-left:4px solid #60A5FA;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+                <div style="color:{MAIN_SOLUK};font-size:13px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">SON HAFTA AKIMI</div>
+                <div style="color:{YESIL if son_hafta['TOPLAM YABANCI AKIMI (mn $)'] > 0 else KIRMIZI};font-size:28px;font-weight:800;">{son_hafta['TOPLAM YABANCI AKIMI (mn $)']:+,.0f} Mn $</div>
                 <div style="color:{METIN_ZAYIF};font-size:11px;margin-top:5px;">{son_hafta['Tarih']}</div>
             </div>
-            <div style="background:{MAIN_CARD};border:1px solid {MAIN_BORDER};border-radius:12px;padding:20px;box-shadow:0 4px 6px rgba(0,0,0,0.05);">
-                <div style="color:{MAIN_SOLUK};font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">KÜMÜLATİF TOPLAM</div>
-                <div style="color:{MAIN_BASLIK};font-size:24px;font-weight:800;">{son_hafta['Kümülatif Toplam (mn $)']/1000:+,.1f} Mr $</div>
+            <div style="background:{MAIN_CARD};border:2px solid {MAIN_BORDER};border-left:4px solid #60A5FA;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+                <div style="color:{MAIN_SOLUK};font-size:13px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">KÜMÜLATİF TOPLAM</div>
+                <div style="color:#FFFFFF;font-size:28px;font-weight:800;">{son_hafta['Kümülatif Toplam (mn $)']/1000:+,.1f} Mr $</div>
                 <div style="color:{METIN_ZAYIF};font-size:11px;margin-top:5px;">Eylül 2020'den Bugüne</div>
             </div>
-            <div style="background:{MAIN_CARD};border:1px solid {MAIN_BORDER};border-radius:12px;padding:20px;box-shadow:0 4px 6px rgba(0,0,0,0.05);">
-                <div style="color:{MAIN_SOLUK};font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">26H PENCERE (6 AY)</div>
-                <div style="color:{YESIL if son_hafta['26H Yuvarlanan Toplam (6 Ay)'] > 0 else KIRMIZI};font-size:24px;font-weight:800;">{son_hafta['26H Yuvarlanan Toplam (6 Ay)']:+,.0f} Mn $</div>
+            <div style="background:{MAIN_CARD};border:2px solid {MAIN_BORDER};border-left:4px solid #60A5FA;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+                <div style="color:{MAIN_SOLUK};font-size:13px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">26H PENCERE (6 AY)</div>
+                <div style="color:{YESIL if son_hafta['26H Yuvarlanan Toplam (6 Ay)'] > 0 else KIRMIZI};font-size:28px;font-weight:800;">{son_hafta['26H Yuvarlanan Toplam (6 Ay)']:+,.0f} Mn $</div>
                 <div style="color:{METIN_ZAYIF};font-size:11px;margin-top:5px;">Orta Vade Trend</div>
             </div>
-            <div style="background:{MAIN_CARD};border:1px solid {MAIN_BORDER};border-radius:12px;padding:20px;box-shadow:0 4px 6px rgba(0,0,0,0.05);">
-                <div style="color:{MAIN_SOLUK};font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">HİSSE SENEDİ (HAFTALIK)</div>
-                <div style="color:{YESIL if son_hafta['Hisse Senedi'] > 0 else KIRMIZI};font-size:24px;font-weight:800;">{son_hafta['Hisse Senedi']:+,.0f} Mn $</div>
+            <div style="background:{MAIN_CARD};border:2px solid {MAIN_BORDER};border-left:4px solid #60A5FA;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+                <div style="color:{MAIN_SOLUK};font-size:13px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">HİSSE SENEDİ (HAFTALIK)</div>
+                <div style="color:{YESIL if son_hafta['Hisse Senedi'] > 0 else KIRMIZI};font-size:28px;font-weight:800;">{son_hafta['Hisse Senedi']:+,.0f} Mn $</div>
                 <div style="color:{METIN_ZAYIF};font-size:11px;margin-top:5px;">BİST Net Yabancı Takası</div>
             </div>
         </div>
