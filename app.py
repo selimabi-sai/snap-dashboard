@@ -16,7 +16,6 @@ import unicodedata
 import json
 from pathlib import Path
 import time
-# st_aggrid kaldirildi — Cloud uyumluluk
 
 AYARLAR_DOSYASI = Path(__file__).parent / "snap_ayarlar.json"
 
