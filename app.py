@@ -1809,8 +1809,95 @@ def puan_tablosu_fragment(puan_data, son_data, cikti_data, sektor_map, ayar_data
         for _c in _ag_df.columns:
             if _c not in ["Hisse", "Sektör"] and not puan_donem_sutunu_mu(_c):
                 _ag_df[_c] = pd.to_numeric(_ag_df[_c], errors="coerce")
+
+        # Ters-iyi sütunları belirle
+        _ters_cols = {c for c in _ag_df.columns if puan_ters_iyi_sutunu_mu(c)}
+        _snap_col = next((c for c in _ag_df.columns if normalize_col(c) == normalize_col("SNAP")), None)
+        _alfa_col = next((c for c in _ag_df.columns if normalize_col(c) == normalize_col("ALFA")), None)
+
+        # Yüzde sütunları
+        _bilanco_sonrasi_col = next((c for c in _ag_df.columns
+            if normalize_col(c) == normalize_col("BİLANÇO SONRASI")), None)
+        _bilanco_xu100_col = next((c for c in _ag_df.columns
+            if normalize_col(c) == normalize_col("BİLANÇO SONRASI XU100")), None)
+        _pct_cols_set = {c for c in [_bilanco_sonrasi_col, _bilanco_xu100_col] if c}
+
+        # Sıralama: SNAP varsa büyükten küçüğe
+        if _snap_col and _snap_col in _ag_df.columns:
+            _ag_df = _ag_df.sort_values(_snap_col, ascending=False, na_position="last")
+
         _tablo_yukseklik = min(1180, max(420, 40 + len(_ag_df) * 35))
-        st.dataframe(_ag_df, use_container_width=True, height=_tablo_yukseklik)
+
+        # HTML tablo oluştur
+        _PT = PUAN_TERM_BG; _PS = PUAN_TERM_SURFACE; _PSA = PUAN_TERM_SURFACE_ALT
+        _PB = PUAN_TERM_BORDER; _PC = PUAN_TERM_CYAN; _PP = PUAN_TERM_PURPLE
+        _PG = PUAN_TERM_SUCCESS; _PR = PUAN_TERM_DANGER; _PM = PUAN_TERM_MUTED
+        _PE = PUAN_TERM_EMPTY; _PX = PUAN_TERM_TEXT; _PF = PUAN_TERM_FONT
+
+        _css = f"""<style>
+        .pt-wrap {{max-height:{_tablo_yukseklik}px;overflow:auto;border:1px solid {_PB};border-radius:12px;}}
+        .pt {{width:100%;border-collapse:collapse;font-family:{_PF};font-size:14px;}}
+        .pt th {{background:{_PSA};color:{_PC};padding:10px 10px;text-align:center;position:sticky;top:0;
+            font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;
+            border-bottom:2px solid {_PC};border-right:1px solid {_PB};cursor:pointer;z-index:1;}}
+        .pt td {{padding:8px 10px;border-bottom:1px solid {_PB};border-right:1px solid {_PB};
+            font-weight:700;font-size:14px;}}
+        .pt tr:nth-child(odd) {{background:{_PT};}}
+        .pt tr:nth-child(even) {{background:{_PS};}}
+        .pt tr:hover {{background:{_PSA};}}
+        .pt .c-hisse {{text-align:left;color:{_PC};font-weight:800;text-shadow:0 0 12px rgba(34,211,238,0.35);}}
+        .pt .c-sektor {{text-align:left;color:{_PM};font-weight:600;}}
+        .pt .c-snap {{text-align:right;color:{_PP};font-weight:800;text-shadow:0 0 12px rgba(168,85,247,0.35);}}
+        .pt .c-pos {{text-align:right;color:{_PG};font-weight:800;text-shadow:0 0 10px rgba(0,227,150,0.28);}}
+        .pt .c-neg {{text-align:right;color:{_PR};font-weight:800;text-shadow:0 0 10px rgba(255,69,96,0.28);}}
+        .pt .c-zero {{text-align:right;color:{_PX};font-weight:800;}}
+        .pt .c-empty {{text-align:right;color:{_PE};font-weight:700;}}
+        .pt .c-muted {{text-align:center;color:{_PM};font-weight:700;}}
+        </style>"""
+
+        _html = _css + '<div class="pt-wrap"><table class="pt"><thead><tr>'
+        for _c in _ag_df.columns:
+            _html += f'<th>{_c}</th>'
+        _html += '</tr></thead><tbody>'
+
+        for _, _row in _ag_df.iterrows():
+            _html += '<tr>'
+            for _c in _ag_df.columns:
+                _v = _row[_c]
+                if _c == "Hisse":
+                    _html += f'<td class="c-hisse">{_v if pd.notna(_v) else ""}</td>'
+                elif _c == "Sektör":
+                    _html += f'<td class="c-sektor">{_v if pd.notna(_v) else ""}</td>'
+                elif _c == _snap_col:
+                    if pd.notna(_v):
+                        _html += f'<td class="c-snap">{float(_v):.1f}</td>'
+                    else:
+                        _html += f'<td class="c-empty">—</td>'
+                elif puan_donem_sutunu_mu(_c):
+                    _html += f'<td class="c-muted">{_v if pd.notna(_v) else ""}</td>'
+                else:
+                    # Sayısal sütun: renk belirle
+                    if pd.isna(_v) or _v == "":
+                        _html += f'<td class="c-empty">—</td>'
+                    else:
+                        try:
+                            _fv = float(_v)
+                            _is_pct = _c in _pct_cols_set or _c == _alfa_col
+                            _fmt_v = f"%{_fv:.2f}".replace(".", ",") if _is_pct else f"{_fv:.1f}".replace(".", ",")
+                            _is_ters = _c in _ters_cols
+                            if _fv > 0:
+                                _cls = "c-neg" if _is_ters else "c-pos"
+                            elif _fv < 0:
+                                _cls = "c-pos" if _is_ters else "c-neg"
+                            else:
+                                _cls = "c-zero"
+                            _html += f'<td class="{_cls}">{_fmt_v}</td>'
+                        except (ValueError, TypeError):
+                            _html += f'<td class="c-zero">{_v}</td>'
+            _html += '</tr>'
+        _html += '</tbody></table></div>'
+
+        st.markdown(_html, unsafe_allow_html=True)
 
     import io as _io
     from datetime import datetime as _dt
