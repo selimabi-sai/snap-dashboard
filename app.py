@@ -267,6 +267,35 @@ TEMALAR = {
 
 st.set_page_config(page_title="SNAP Dashboard", page_icon="📊", layout="wide")
 
+def sifre_kontrol():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if st.session_state.authenticated:
+        return True
+
+    st.markdown("""
+    <div style="display:flex; justify-content:center; align-items:center; min-height:80vh;">
+        <div style="text-align:center;">
+            <div style="font-size:48px; font-weight:900; color:#4a9eff; margin-bottom:8px;">SNAP</div>
+            <div style="color:#556a8a; font-size:13px; margin-bottom:24px;">Giriş yapın</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        sifre = st.text_input("Şifre", type="password", label_visibility="collapsed", placeholder="Şifre girin...")
+        if sifre:
+            if sifre == "snap2026":
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Yanlış şifre")
+    return False
+
+if not sifre_kontrol():
+    st.stop()
+
 if "ayarlar_yuklendi" not in st.session_state:
     _kayit = ayarlari_yukle()
     _tema_kayit = _kayit.get("tema_adi", "2 Koyu Lacivert")
